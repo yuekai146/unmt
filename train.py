@@ -205,34 +205,42 @@ def calc_cross_domain(src_batch, direction, translator, trg_vocab,
     return loss_cd, enc_outputs, in_mask.to(device)
 
 
+def build_seq2seq_components(args):
+    src_embed_layer = Embedding(
+                args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
+                 )
+
+    trg_embed_layer = Embedding(
+            args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
+            )
+
+    encoder = Encoder(
+            args.embed_size, args.enc_hidden_size, args.enc_num_layers,
+            bias=args.enc_bias
+            )
+
+    decoder = Decoder(
+            args.enc_hidden_size, args.enc_hidden_size,
+            args.dec_num_layers, bias=args.dec_bias
+            )
+
+    attention = Attention(args.enc_hidden_size)
+
+    fc = nn.Linear(2*args.enc_hidden_size, args.enc_hidden_size)
+
+    output_layer = nn.Linear(
+            args.enc_hidden_size, NUM_OF_SPECIAL_TOKENS+args.vocab_size
+            )
+
+    return src_embed_layer, trg_embed_layer, encoder, decoder,\
+            attention, fc, output_layer
+
+
 def update_translator(seq2seq_model, args, src_vocab, trg_vocab,
                       BT_translator=None):
     if BT_translator == None:
-        src_embed_layer = Embedding(
-                    args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
-                     )
-
-        trg_embed_layer = Embedding(
-                args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
-                )
-
-        encoder = Encoder(
-                args.embed_size, args.enc_hidden_size, args.enc_num_layers,
-                bias=args.enc_bias
-                )
-
-        decoder = Decoder(
-                args.enc_hidden_size, args.enc_hidden_size,
-                args.dec_num_layers, bias=args.dec_bias
-                )
-
-        attention = Attention(args.enc_hidden_size)
-
-        fc = nn.Linear(2*args.enc_hidden_size, args.enc_hidden_size)
-
-        output_layer = nn.Linear(
-                args.enc_hidden_size, NUM_OF_SPECIAL_TOKENS+args.vocab_size
-                )
+        src_embed_layer, trg_embed_layer, encoder, decoder,\
+        attention, fc, output_layer = build_seq2seq_components(args)
         
         BT_translator = NMT_Translator(
                     src_embed_layer, trg_embed_layer, encoder, decoder,
@@ -273,16 +281,7 @@ def update_translator(seq2seq_model, args, src_vocab, trg_vocab,
     return BT_translator
 
 
-def main(num_epochs):
-    """
-    真正的train的代码
-    1、读入所有的超参数
-    2、实例化vocab和WMY_Dataset得到 *****和data_loader
-    3、实例化encoder decoder attention discriminator embedding Seq2seq_Model
-    4、实例化WBW_translator作为M_0
-    5、调用get_optimizer得到optimizer_1优化Seq2seq_Model
-        optimizer_2优化discriminator
-    """
+def main():
     parser = argparse.ArgumentParser(
             description="Unsupervised NMT training hyper parameters."
             )
@@ -499,33 +498,9 @@ def main(num_epochs):
             num_workers=args.num_workers
             )
     #Build model
-    src_embed_layer = Embedding(
-                args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS,
-                embedding_matrix=src_embedding_matrix
-                 )
 
-    trg_embed_layer = Embedding(
-            args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS,
-            embedding_matrix=trg_embedding_matrix
-            )
-
-    encoder = Encoder(
-            args.embed_size, args.enc_hidden_size, args.enc_num_layers,
-            bias=args.enc_bias
-            )
-
-    decoder = Decoder(
-            args.enc_hidden_size, args.enc_hidden_size, args.dec_num_layers,
-            bias=args.dec_bias
-            )
-
-    attention = Attention(args.enc_hidden_size)
-
-    fc = nn.Linear(2*args.enc_hidden_size, args.enc_hidden_size)
-
-    output_layer = nn.Linear(
-            args.enc_hidden_size, NUM_OF_SPECIAL_TOKENS+args.vocab_size
-            )
+    src_embed_layer, trg_embed_layer, encoder, decoder,\
+    attention, fc, output_layer = build_seq2seq_components(args)
     
     discriminator = Discriminator(
             args.enc_hidden_size, args.dis_hidden_size, args.dis_num_layers
@@ -558,6 +533,8 @@ def main(num_epochs):
         discriminator = nn.parallel.distributed.DistributedDataParallel(
                 discriminator, device_ids=range(args.num_gpus)
                 )
+    
+    print("Build seq2seq model and discriminator finished!")
 
     seq2seq_optimizer = get_optimizer(
             seq2seq_model, args.seq2seq_lr, method='adam',
@@ -567,6 +544,8 @@ def main(num_epochs):
             discriminator, args.dis_lr, method='adam',
             betas=args.dis_betas
             )
+
+    print("Build optimizers finished!")
     
     pretrained_step = 0
     if args.resume_seq2seq:
@@ -574,12 +553,14 @@ def main(num_epochs):
                 load_state_dict(
                     args.resume_seq2seq, seq2seq_model, seq2seq_optimizer
                 )
+        print("Resume seq2seq model from {}".format(args.resume_seq2seq))
 
     if args.resume_dis:
         _, discriminator, dis_optimizer = \
                 load_state_dict(
                     args.resume_dis, discriminator, dis_optimizer, 'dis'
                 )
+        print("Resume discriminator from {}".format(args.resume_dis))
 
     # Initialize back translation
     BT_translator = WBW_Translator(args.src_dict, args.trg_dict)
@@ -596,7 +577,7 @@ def main(num_epochs):
     avg_loss = 0
     num_batches = len(src_dataset) / args.batch_size
 
-    for epoch in range(num_epochs):
+    for epoch in range(args.num_epochs):
         for i_batch, src_batch, trg_batch in enumerate(zip(
                 src_dataloader, trg_dataloader
                 )):
