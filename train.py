@@ -656,9 +656,9 @@ def main():
                         )
                     )
 
-            l_seq2seq_model = args.lambda_auto * (l_auto_src + l_auto_trg) +\
-                              args.lambda_cd * (l_cd_src + l_cd_trg) +\
-                              args.lambda_adv * l_adv_total
+            l_seq2seq_model = args.lambda_auto*0.5*(l_auto_src + l_auto_trg) +\
+                              args.lambda_cd*0.5*(l_cd_src + l_cd_trg) +\
+                              args.lambda_adv*l_adv_total
             
             seq2seq_optimizer.zero_grad()
             if args,grad_norm is not None:
@@ -707,26 +707,26 @@ def main():
                         num_batches_trained
                         )
 
-                if num_batches_trained % args.store_interval == 0:
-                    num_stored = len(os.listdir(args.checkpoint_path))
-                    if num_stored == args.max_store_num:
-                        # Find the checkpoint with least batches trained.
-                        temp = []
-                        for checkpoint in os.listdir(args.checkpoint_path):
-                            temp.append(
-                                int(checkpoint.split('.')[0][11:])
-                                    )
-                        minimum = min(temp)
-                        os.remove(
-                                args.checkpoint_path + 'checkpoint_' + \
-                                str(minimum) + '.pth'
+            if num_batches_trained % args.store_interval == 0:
+                num_stored = len(os.listdir(args.checkpoint_path))
+                if num_stored == args.max_store_num:
+                    # Find the checkpoint with least batches trained.
+                    temp = []
+                    for checkpoint in os.listdir(args.checkpoint_path):
+                        temp.append(
+                            int(checkpoint.split('.')[0][11:])
                                 )
-                        store_state(
-                                pretrained_step+num_batches_trained,
-                                seq2seq_model, seq2seq_optimizer,
-                                discriminator, dis_optimizer,
-                                args.checkpoint_path
-                                )
+                    minimum = min(temp)
+                    os.remove(
+                            args.checkpoint_path + 'checkpoint_' + \
+                            str(minimum) + '.pth'
+                            )
+                    store_state(
+                            pretrained_step+num_batches_trained,
+                            seq2seq_model, seq2seq_optimizer,
+                            discriminator, dis_optimizer,
+                            args.checkpoint_path
+                            )
         
         if epoch == 0:
             BT_translator = update_translator(
