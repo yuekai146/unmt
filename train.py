@@ -6,6 +6,7 @@ from tensorboardX import SummaryWriter
 from translator import *
 from utils import *
 import argparse
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -32,38 +33,53 @@ def get_optimizer(net, lr, method='adam', betas=None):
     return optimizer
 
 
-def store_state(step, net, optimizer, checkpoint_path):
+def store_state(step, seq2seq, seq2seq_optimizer, discriminator,
+                dis_optimizer, checkpoint_path):
     """
     Input:
         step: Training has been performed for step batches.
-        net: Network to be stored.
-        optimizer: optimizer along with net.
+        seq2seq: Sequence to sequence model to be stored.
+        seq2seq_optimizer: optimizer along with seq2seq.
+        discriminator: Discriminator to be stored.
+        dis_optimizer: optimizer along with discriminator.
         checkpoint_path: Where to store optimizer and net.
     """
     state_dict = {
             "step":step,
-            "network_state_dict":net.cpu().state_dict(),
-            "optimizer_state_dict":optimizer.state_dict()
+            "seq2seq_state_dict":seq2seq.cpu().state_dict(),
+            "seq2seq_optimizer_state_dict":seq2seq_optimizer.state_dict(),
+            "discriminator_state_dict":discriminator.state_dict(),
+            "dis_optimizer_state_dict":dis_optimizer.state_dict()
             }
-    torch.save(state_dict, checkpoint_path)
+    torch.save(state_dict,
+               checkpoint_path + 'checkpoint_' + str(step) + '.pth')
 
 
-def load_state(checkpoint_path, net, optimizer):
+def load_state(checkpoint_path, net, optimizer, which='seq2seq'):
     """
     Input:
         checkpoint_path: Where to load state_dict
-        net: A Seq2seq_Model or Discriminator instance.
+        net: A Seq2seq_Model or discriminator instance.
         optimizer: Used to optimize net.
+        which: A string 'seq2seq' or 'dis'
     """
     state_dict = torch.load(checkpoint_path)
     step = state_dict["step"]
     new_params = OrderedDict()
-    for key, val in enumerate(state_dict["network_state_dict"]):
+
+    if which == 'seq2seq':
+        optimizer.load_state_dict(state_dict['seq2seq_optimizer_state_dict'])
+        to_load = state_dict['seq2seq_state_dict']
+    elif which == 'dis':
+        optimizer.load_state_dict(state_dict['dis_optimizer_state_dict'])
+        to_load = state_dict['discriminator_state_dict']
+
+    for key, val in enumerate(to_load):
         key = key[7:]
         new_params[key] = val
 
     net.load_state_dict(new_params)
-    optimizer.load_state_dict(state_dict["optimizer_state_dict"])
+
     return step, net, optimizer
 
 
@@ -151,7 +167,8 @@ def calc_cross_domain(src_batch, direction, translator, trg_vocab,
                 ids_, mask_, lengths_,
                 direction
                 )
-        in_ids = src_translated_ids.cpu().tolist()
+
+        in_ids = src_translated_ids.cpu().numpy().tolist()
         src_tranlated_lengths = src_translated_lengths.numpy().tolist()
         batch_size = len(src_tranlated_lengths)
 
@@ -186,6 +203,74 @@ def calc_cross_domain(src_batch, direction, translator, trg_vocab,
     loss_cd = l_cd(log_probs, ref_ids, ref_mask)
 
     return loss_cd, enc_outputs, in_mask.to(device)
+
+
+def update_translator(seq2seq_model, args, src_vocab, trg_vocab,
+                      BT_translator=None):
+    if BT_translator == None:
+        src_embed_layer = Embedding(
+                    args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
+                     )
+
+        trg_embed_layer = Embedding(
+                args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
+                )
+
+        encoder = Encoder(
+                args.embed_size, args.enc_hidden_size, args.enc_num_layers,
+                bias=args.enc_bias
+                )
+
+        decoder = Decoder(
+                args.enc_hidden_size, args.enc_hidden_size,
+                args.dec_num_layers, bias=args.dec_bias
+                )
+
+        attention = Attention(args.enc_hidden_size)
+
+        fc = nn.Linear(2*args.enc_hidden_size, args.enc_hidden_size)
+
+        output_layer = nn.Linear(
+                args.enc_hidden_size, NUM_OF_SPECIAL_TOKENS+args.vocab_size
+                )
+        
+        BT_translator = NMT_Translator(
+                    src_embed_layer, trg_embed_layer, encoder, decoder,
+                    attention, fc, output_layer, args.max_len,
+                    args.max_ratio, src_vocab, trg_vocab,
+                    seq2seq_model.device
+                )
+
+        if args.cuda():
+            BT_translator = BT_translator.cuda()
+
+        if args.local_rank >= 0:
+            BT_translator = nn.parallel.distributed.DistributedDataParallel(
+                    BT_translator, device_ids=range(args.num_gpus)
+                    )
+
+    new_params = seq2seq_model.src_embedding.state_dict()
+    BT_translator.src_embedding.load_state_dict(new_params)
+
+    new_params = seq2seq_model.trg_embedding.state_dict()
+    BT_translator.trg_embedding.load_state_dict(new_params)
+
+    new_params = seq2seq_model.encoder.state_dict()
+    BT_translator.encoder.load_state_dict(new_params)
+
+    new_params = seq2seq_model.decoder.state_dict()
+    BT_translator.decoder.load_state_dict(new_params)
+
+    new_params = seq2seq_model.attention.state_dict()
+    BT_translator.attention.load_state_dict(new_params)
+
+    new_params = seq2seq_model.fc.state_dict()
+    BT_translator.fc.load_state_dict(new_params)
+
+    new_params = seq2seq_model.output_layer.state_dict()
+    BT_translator.output_layer.load_state_dict(new_params)
+
+    return BT_translator
 
 
 def main(num_epochs):
@@ -310,11 +395,11 @@ def main(num_epochs):
 
     # Arguments related to checkpoint and log
     parser.add_argument(
-            '--checkpoint_path', type=str, default='./checkpoint',
+            '--checkpoint_path', type=str, default='./checkpoint/',
             help='path to store and resume model'
             )
     parser.add_argument(
-            '--log_dir', type=str, default='./logs',
+            '--log_dir', type=str, default='./logs/',
             help='path to store logging information'
             )
     parser.add_argument(
@@ -369,6 +454,13 @@ def main(num_epochs):
             )
 
     args = parser.parse_args()
+
+    # Make checkpoint and log directory
+    if os.path.exists(args.checkpoint_path) == False:
+        os.mkdir(args.checkpoint_path)
+
+    if os.path.exists(args.log_dir) == False:
+        os.mkdir(args.log_dir)
 
     # Initialize Vocab and dataset instances for src and trg
     src_words, src_embedding_matrix = get_embedding(
@@ -476,14 +568,17 @@ def main(num_epochs):
             betas=args.dis_betas
             )
     
+    pretrained_step = 0
     if args.resume_seq2seq:
-        load_state_dict(
-                args.resume_seq2seq, seq2seq_model, seq2seq_optimizer
+        pretrained_step, seq2seq_model, seq2seq_optimizer = \
+                load_state_dict(
+                    args.resume_seq2seq, seq2seq_model, seq2seq_optimizer
                 )
 
     if args.resume_dis:
-        load_state_dict(
-                args.resume_dis, discriminator, dis_optimizer
+        _, discriminator, dis_optimizer = \
+                load_state_dict(
+                    args.resume_dis, discriminator, dis_optimizer, 'dis'
                 )
 
     # Initialize back translation
@@ -631,6 +726,33 @@ def main(num_epochs):
                         num_batches_trained
                         )
 
-                if num_batches_trained % args.store_interval:
-
-        M = nmt_translator(Seq2seq_Model.encoder.eval(),其他三个类似)
+                if num_batches_trained % args.store_interval == 0:
+                    num_stored = len(os.listdir(args.checkpoint_path))
+                    if num_stored == args.max_store_num:
+                        # Find the checkpoint with least batches trained.
+                        temp = []
+                        for checkpoint in os.listdir(args.checkpoint_path):
+                            temp.append(
+                                int(checkpoint.split('.')[0][11:])
+                                    )
+                        minimum = min(temp)
+                        os.remove(
+                                args.checkpoint_path + 'checkpoint_' + \
+                                str(minimum) + '.pth'
+                                )
+                        store_state(
+                                pretrained_step+num_batches_trained,
+                                seq2seq_model, seq2seq_optimizer,
+                                discriminator, dis_optimizer,
+                                args.checkpoint_path
+                                )
+        
+        if epoch == 0:
+            BT_translator = update_translator(
+                    seq2seq_model, args, src_vocab, trg_vocab
+                    )
+        else:
+            BT_translator = update_translator(
+                    seq2seq_model, args, src_vocab, trg_vocab,
+                    BT_translator
+                    )
