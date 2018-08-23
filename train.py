@@ -74,8 +74,7 @@ def load_state(checkpoint_path, net, optimizer, which='seq2seq'):
         optimizer.load_state_dict(state_dict['dis_optimizer_state_dict'])
         to_load = state_dict['discriminator_state_dict']
 
-    for key, val in enumerate(to_load):
-        key = key[7:]
+    for key, val in to_load.items():
         new_params[key] = val
 
     net.load_state_dict(new_params)
@@ -117,12 +116,13 @@ def calc_auto_encode(batch, device, direction, seq2seq_model):
     log_probs_auto, enc_outputs = seq2seq_model(
             in_ids, ref_ids, in_mask, in_lengths, direction
             )
-    loss_auto = l_auto(log_probs_auto_src, ref_ids, ref_mask)
+    
+    loss_auto = l_auto(log_probs_auto, ref_ids, ref_mask)
 
     return loss_auto, enc_outputs, in_mask
 
 
-def calc_cross_domain(src_batch, direction, translator, trg_vocab,
+def calc_cross_domain(src_batch, direction, translator, src_vocab, trg_vocab,
                       seq2seq_model, args, tranlator_type='WBW'):
     ids = src_batch['ids']
     lengths = src_batch["sentence_len"]
@@ -139,11 +139,9 @@ def calc_cross_domain(src_batch, direction, translator, trg_vocab,
                 ids_[i][:lengths_[i]] for i in range(batch_size)
                 ]
 
-        sentence_batch = src_vocab.ids_batch2sentence(
-                sentence_batch, direction
-                )
+        sentence_batch = src_vocab.ids_batch2sentence(sentence_batch)
 
-        src_translated_batch, _, _ = BT_translator(sentence_batch, direction)
+        src_translated_batch, _, _ = translator(sentence_batch, direction)
 
         in_ids = []
         for s in src_translated_batch:
@@ -163,17 +161,17 @@ def calc_cross_domain(src_batch, direction, translator, trg_vocab,
         ids_, mask_, lengths_ = \
                 ids.to(device), mask.to(device), lengths
 
-        src_translated_ids, src_tranlated_lengths, _ = BT_translator(
+        src_translated_ids, _, src_translated_lengths = translator(
                 ids_, mask_, lengths_,
                 direction
                 )
 
         in_ids = src_translated_ids.cpu().numpy().tolist()
-        src_tranlated_lengths = src_translated_lengths.numpy().tolist()
-        batch_size = len(src_tranlated_lengths)
-
+        src_translated_lengths = src_translated_lengths.numpy().tolist()
+        batch_size = len(src_translated_lengths)
+        
         in_ids = [
-                in_ids[i][:src_tranlated_lengths[i]] for i in range(batch_size)
+                in_ids[i][:src_translated_lengths[i]] for i in range(batch_size)
                 ]
     else:
         raise("Invalid tranlation type! Must be 'WBW' or 'NMT'.")
@@ -207,21 +205,23 @@ def calc_cross_domain(src_batch, direction, translator, trg_vocab,
 
 def build_seq2seq_components(args):
     src_embed_layer = Embedding(
-                args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
+                args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS,
+                args.src_embedding_matrix
                  )
 
     trg_embed_layer = Embedding(
-            args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS
+            args.embed_size, args.vocab_size, NUM_OF_SPECIAL_TOKENS,
+            args.trg_embedding_matrix
             )
 
     encoder = Encoder(
             args.embed_size, args.enc_hidden_size, args.enc_num_layers,
-            bias=args.enc_bias
+            bias=args.dis_enc_bias
             )
 
     decoder = Decoder(
             args.enc_hidden_size, args.enc_hidden_size,
-            args.dec_num_layers, bias=args.dec_bias
+            args.dec_num_layers, bias=args.dis_dec_bias
             )
 
     attention = Attention(args.enc_hidden_size)
@@ -249,7 +249,7 @@ def update_translator(seq2seq_model, args, src_vocab, trg_vocab,
                     seq2seq_model.device
                 )
 
-        if args.cuda():
+        if args.cuda:
             BT_translator = BT_translator.cuda()
 
         if args.local_rank >= 0:
@@ -300,10 +300,10 @@ def main():
             '--trg_dict', help='path to trg dictionary'
             )
     parser.add_argument(
-            'src_corpus', help='path to src training corpus'
+            '--src_corpus', help='path to src training corpus'
             )
     parser.add_argument(
-            'trg_corpus', help='path to trg training corpus'
+            '--trg_corpus', help='path to trg training corpus'
             )
     parser.add_argument('--embed_size', type=int, default=0,
             help='embedding size of word vector'
@@ -327,7 +327,7 @@ def main():
     # Arguments related to network architecture.
     # Encoder
     parser.add_argument(
-            '--enc_hidden_size', type=int. default=300,
+            '--enc_hidden_size', type=int, default=300,
             help='Encoder hidden size'
             )
     parser.add_argument(
@@ -335,7 +335,7 @@ def main():
             help='Number of Encoder layers'
             )
     parser.add_argument(
-            '--enc_bias', type=bool, default=True,
+            '--dis_enc_bias', action='store_false',
             help='Whether to use bias in Encoder'
             )
     # Decoder
@@ -344,7 +344,7 @@ def main():
             help='Number of Decoder layers'
             )
     parser.add_argument(
-            '--dec_bias', type=bool, default=True,
+            '--dis_dec_bias', action='store_false',
             help='Whether to use bias in Decoder'
             )
     # Discriminator
@@ -353,7 +353,7 @@ def main():
             help='Number of discriminator layers'
             )
     parser.add_argument(
-            '--dis_hidden_size'. type=int, default=1024,
+            '--dis_hidden_size', type=int, default=1024,
             help='Discriminator hideen size'
             )
 
@@ -388,7 +388,7 @@ def main():
             help='Number of epochs to train the network'
             )
     parser.add_argument(
-            '--num_workers', type=int, default=4.
+            '--num_workers', type=int, default=4,
             help='How many threads used to load data'
             )
 
@@ -423,7 +423,7 @@ def main():
 
     # Arguments related to using gpus
     parser.add_argument(
-            '--cuda', type=bool, default=False,
+            '--cuda', action='store_true',
             help='Whether to use gpu for training'
             )
     parser.add_argument(
@@ -469,6 +469,7 @@ def main():
             src_embedding_matrix.size()
             )
         )
+    args.src_embedding_matrix = src_embedding_matrix
 
     src_vocab = Vocab(src_words, 'src')
     src_dataset = WMT_Dataset(
@@ -487,6 +488,9 @@ def main():
             trg_embedding_matrix.size()
             )
         )
+    args.trg_embedding_matrix = trg_embedding_matrix
+    args.vocab_size, args.embed_size = trg_embedding_matrix.size()
+    args.vocab_size = args.vocab_size - NUM_OF_SPECIAL_TOKENS
 
     trg_vocab = Vocab(trg_words, 'trg')
     trg_dataset = WMT_Dataset(
@@ -535,6 +539,8 @@ def main():
                 )
     
     print("Build seq2seq model and discriminator finished!")
+    print(seq2seq_model)
+    print(discriminator)
 
     seq2seq_optimizer = get_optimizer(
             seq2seq_model, args.seq2seq_lr, method='adam',
@@ -546,25 +552,24 @@ def main():
             )
 
     print("Build optimizers finished!")
+    print(seq2seq_optimizer)
+    print(dis_optimizer)
     
     pretrained_step = 0
     if args.resume_seq2seq:
         pretrained_step, seq2seq_model, seq2seq_optimizer = \
-                load_state_dict(
+                load_state(
                     args.resume_seq2seq, seq2seq_model, seq2seq_optimizer
                 )
         print("Resume seq2seq model from {}".format(args.resume_seq2seq))
 
     if args.resume_dis:
         _, discriminator, dis_optimizer = \
-                load_state_dict(
+                load_state(
                     args.resume_dis, discriminator, dis_optimizer, 'dis'
                 )
         print("Resume discriminator from {}".format(args.resume_dis))
 
-    # Initialize back translation
-    BT_translator = WBW_Translator(args.src_dict, args.trg_dict)
-    
     # Initialize log writer
     if args.local_rank >= 0:
         if args.local_rank == 0:
@@ -572,67 +577,81 @@ def main():
     else:
         log_writer = SummaryWriter(args.log_dir)
 
+    # Initialize some intermediate variable.
     num_batches_trained = 0
     total_loss = 0
     avg_loss = 0
     num_batches = len(src_dataset) / args.batch_size
+    num_epochs_trained = int(pretrained_step / num_batches)
 
-    for epoch in range(args.num_epochs):
-        for i_batch, src_batch, trg_batch in enumerate(zip(
+    #This code block is for test purpose
+    num_epochs_trained = 1
+
+    # Initialize or reconstruct translator for back translation.
+    if num_epochs_trained > 0:
+        BT_translator = update_translator(
+                seq2seq_model, args,
+                src_vocab, trg_vocab
+                )
+    else:
+        BT_translator = WBW_Translator(args.src_dict, args.trg_dict)
+
+    for epoch in range(num_epochs_trained, args.num_epochs):
+        for i_batch, (src_batch, trg_batch) in enumerate(zip(
                 src_dataloader, trg_dataloader
                 )):
             # Perform source and target language auto encoding
             l_auto_src, src_enc_outputs_auto, src_enc_mask_auto = \
                     calc_auto_encode(
-                        src_batch, args.device, 'src2src', seq2seq_model
+                        src_batch, device, 'src2src', seq2seq_model
                     )
 
             l_auto_trg, trg_enc_outputs_auto, trg_enc_mask_auto = \
                     calc_auto_encode(
-                        trg_batch, args.device, 'trg2trg', seq2seq_model
+                        trg_batch, device, 'trg2trg', seq2seq_model
                     )
 
             # Perform source and target language back translation
             if epoch == 0:
                 l_cd_src, src_enc_outputs_cd, src_enc_mask_cd = \
                         calc_cross_domain(
-                            src_batch, 'src2trg', BT_translator, trg_vocab,
-                            seq2seq_model, args, 'WBW'
+                            src_batch, 'src2trg', BT_translator, src_vocab, 
+                            trg_vocab, seq2seq_model, args, 'WBW'
                         )
 
                 l_cd_trg, trg_enc_outputs_cd, trg_enc_mask_cd = \
                         calc_cross_domain(
-                            trg_batch, 'trg2src', BT_translator, src_vocab,
-                            seq2seq_model, args, 'WBW'
+                            trg_batch, 'trg2src', BT_translator, trg_vocab,
+                            src_vocab, seq2seq_model, args, 'WBW'
                         )
             else:
                 l_cd_src, src_enc_outputs_cd, src_enc_mask_cd = \
                         calc_cross_domain(
-                            src_batch, 'src2trg', BT_translator, trg_vocab,
-                            seq2seq_model, args, 'NMT'
+                            src_batch, 'src2trg', BT_translator, src_vocab,
+                            trg_vocab, seq2seq_model, args, 'NMT'
                         )
 
                 l_cd_trg, trg_enc_outputs_cd, trg_enc_mask_cd = \
                         calc_cross_domain(
-                            trg_batch, 'trg2src', BT_translator, src_vocab,
-                            seq2seq_model, args, 'NMT'
+                            trg_batch, 'trg2src', BT_translator, trg_vocab,
+                            src_vocab, seq2seq_model, args, 'NMT'
                         )
-
+            
             l_dis_total = 0.25 * (
                     l_dis(
-                        discriminator(src_enc_outputs_auto),
+                        discriminator(src_enc_outputs_auto.detach()),
                         src_enc_mask_auto, args.smooth, 'src'
                         ) +\
                     l_dis(
-                        discriminator(trg_enc_outputs_auto),
+                        discriminator(trg_enc_outputs_auto.detach()),
                         trg_enc_mask_auto, args.smooth, 'trg'
                         ) +\
                     l_dis(
-                        discriminator(src_enc_outputs_cd),
-                        src_enc_mask_cd, 'src'
+                        discriminator(src_enc_outputs_cd.detach()),
+                        src_enc_mask_cd, args.smooth, 'src'
                         ) +\
                     l_dis(
-                        discriminator(trg_enc_outputs_cd),
+                        discriminator(trg_enc_outputs_cd.detach()),
                         trg_enc_mask_cd, args.smooth, 'trg'
                         )
                     )
@@ -640,19 +659,19 @@ def main():
             l_adv_total = 0.25 * (
                     l_adv(
                         discriminator(src_enc_outputs_auto),
-                        src_enc_mask_auto, args.smooth, 'src'
+                        src_enc_mask_auto, 'src'
                         ) +\
                     l_adv(
                         discriminator(trg_enc_outputs_auto),
-                        trg_enc_mask_auto, args.smooth, 'trg'
+                        trg_enc_mask_auto, 'trg'
                         ) +\
                     l_adv(
                         discriminator(src_enc_outputs_cd),
-                        src_enc_mask_cd, args.smooth, 'src'
+                        src_enc_mask_cd, 'src'
                         ) +\
                     l_adv(
                         discriminator(trg_enc_outputs_cd),
-                        trg_enc_mask_cd, args.smooth, 'trg'
+                        trg_enc_mask_cd, 'trg'
                         )
                     )
 
@@ -661,7 +680,7 @@ def main():
                               args.lambda_adv*l_adv_total
             
             seq2seq_optimizer.zero_grad()
-            if args,grad_norm is not None:
+            if args.grad_norm is not None:
                 nn.utils.clip_grad_norm_(
                         seq2seq_model.parameters(), args.grad_norm
                         )
@@ -721,12 +740,15 @@ def main():
                             args.checkpoint_path + 'checkpoint_' + \
                             str(minimum) + '.pth'
                             )
-                    store_state(
-                            pretrained_step+num_batches_trained,
-                            seq2seq_model, seq2seq_optimizer,
-                            discriminator, dis_optimizer,
-                            args.checkpoint_path
-                            )
+
+                store_state(
+                        pretrained_step+num_batches_trained,
+                        seq2seq_model, seq2seq_optimizer,
+                        discriminator, dis_optimizer,
+                        args.checkpoint_path
+                        )
+
+            print("Batch {} finished!".format(num_batches_trained))
         
         if epoch == 0:
             BT_translator = update_translator(
@@ -737,3 +759,6 @@ def main():
                     seq2seq_model, args, src_vocab, trg_vocab,
                     BT_translator
                     )
+
+
+main()

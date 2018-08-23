@@ -122,9 +122,12 @@ class Attention(nn.Module):
         Return:
             context_vec: FloatTensor(batch_size, hidden_size)
         '''
-        super(Attention, self).__init__()
         # score (batch_size, l)
-        score = torch.squeeze(torch.bmm(enc_states, dec_vec.unsqueeze(-1)))
+        score = torch.squeeze(
+                torch.bmm(
+                    enc_states, self.attn_matrix(dec_vec).unsqueeze(-1)
+                    )
+                )
         # attn_weight (batch_size, l)
         attn_weight = F.softmax(score, dim=1)
         attn_weight = attn_weight * mask
@@ -230,9 +233,8 @@ class Seq2seq_Model(nn.Module):
         deriection: A String ('src2trg' or 'trg2src')
 
         Return:
-            log_probs: A list with each element being a FloatTensor
-                       (batch_size * (vocab_size+num_special_tokens)).
-                       len(log_probs) = l2
+            log_probs: A FloatTensor of size
+                       (batch_size * l2 * (vocab_size+num_special_tokens)).
             enc_outputs: FloatTensor(batch_size * l1 * hidden_size)
         """
         if direction == 'src2trg':
