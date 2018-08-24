@@ -34,6 +34,7 @@ def build_vocab(corpus_path, vocab_path, size=100000):
     f.close()
 
     vocab = sorted(vocab.items(), key=lambda item: -item[1])
+    size = min(size, len(vocab))
     vocab = vocab[:size]
     f = open(vocab_path, 'a')
 
@@ -183,3 +184,56 @@ def post_process(dict_path, overlap_path, output_path):
     for l in output:
         f.writelines(l + '\n')
     f.close()
+
+
+def main():
+    ROOT_PATH='/data/zhaoyuekai/iwslt14/'
+    SRC_PATH=ROOT_PATH + 'final_train.en'
+    TRG_PATH=ROOT_PATH + 'final_train.de'
+    MERGE_PATH=ROOT_PATH + 'merged_text.txt'
+    
+    #merge_text(SRC_PATH, TRG_PATH, MERGE_PATH)
+    CORPUS_PATH=ROOT_PATH + 'final_train.en'
+    VOCAB_PATH=ROOT_PATH + 'vocab_large.en'
+    ALIGN_PATH=ROOT_PATH + 'forward.align'
+    OUTPUT_PATH=ROOT_PATH + 'dict_draft.en'
+
+    #build_vocab(CORPUS_PATH, VOCAB_PATH, size=50000)
+    #init_dict(VOCAB_PATH, SRC_PATH, TRG_PATH, ALIGN_PATH, OUTPUT_PATH, reverse=False)
+
+    INIT_PATH=ROOT_PATH + 'dict_draft.en'
+    OUTPUT_PATH=ROOT_PATH + 'final_dict.en'
+    #get_dict(SRC_PATH, TRG_PATH, ALIGN_PATH, INIT_PATH, OUTPUT_PATH)
+
+
+    CORPUS_PATH=ROOT_PATH + 'final_train.de'
+    VOCAB_PATH=ROOT_PATH + 'vocab_large.de'
+    ALIGN_PATH=ROOT_PATH + 'reverse.align'
+    OUTPUT_PATH=ROOT_PATH + 'dict_draft.de'
+
+    #build_vocab(CORPUS_PATH, VOCAB_PATH, size=50000)
+    #init_dict(VOCAB_PATH, TRG_PATH, SRC_PATH, ALIGN_PATH, OUTPUT_PATH, reverse=True)
+
+    INIT_PATH=ROOT_PATH + 'dict_draft.de'
+    OUTPUT_PATH=ROOT_PATH + 'final_dict.de'
+    #get_dict(TRG_PATH, SRC_PATH, ALIGN_PATH, INIT_PATH, OUTPUT_PATH, reverse=True)
+    
+    SRC_DICT_PATH=ROOT_PATH + 'dict_draft.en'
+    TRG_DICT_PATH=ROOT_PATH + 'dict_draft.de'
+    OUTPUT_PATH=ROOT_PATH + 'same_words'
+    get_overlap(SRC_DICT_PATH, TRG_DICT_PATH, OUTPUT_PATH)
+    
+    DICT_PATH=ROOT_PATH + 'final_dict.en'
+    OVERLAP_PATH=ROOT_PATH + 'same_words'
+    OUTPUT_PATH=ROOT_PATH + 'en_dict.txt'
+    post_process(DICT_PATH, OVERLAP_PATH, OUTPUT_PATH)
+
+
+    DICT_PATH=ROOT_PATH + 'final_dict.de'
+    OVERLAP_PATH=ROOT_PATH + 'same_words'
+    OUTPUT_PATH=ROOT_PATH + 'de_dict.txt'
+    post_process(DICT_PATH, OVERLAP_PATH, OUTPUT_PATH)
+
+
+
+main()

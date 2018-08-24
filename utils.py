@@ -27,10 +27,12 @@ def add_noise(sentence, drop_prob, k):
 
     # Drop words with probability p.
     index = []
-    for i, w in enumerate(sent):
-        prob = np.random.uniform()
-        if prob >= drop_prob:
-            index.append(i)
+    while len(index) == 0:
+        for i, w in enumerate(sent):
+            prob = np.random.uniform()
+            if prob >= drop_prob:
+                index.append(i)
+
     sent = [sent[idx] + ' ' for idx in index]
     sent_ = ''
     for w in sent:
@@ -62,10 +64,11 @@ def batch_add_noise(batch, drop_prob, k):
         sorted_q = sorted(q)
         index = [q.index(x) for x in sorted_q]
         s_noise = []
-        for idx in index:
-            prob = np.random.uniform()
-            if prob >= drop_prob:
-                s_noise.append(s[idx])
+        while len(s_noise) == 0:
+            for idx in index:
+                prob = np.random.uniform()
+                if prob >= drop_prob:
+                    s_noise.append(s[idx])
         noise_batch.append(s_noise)
 
     noise_lengths = [len(s) for s in noise_batch]

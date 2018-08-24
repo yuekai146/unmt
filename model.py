@@ -39,7 +39,7 @@ class Encoder(nn.Module):
         packed_inputs = nn.utils.rnn.pack_padded_sequence(
                 embeded_ids, sentence_len, batch_first=True
             )
-        self.rnn.flatten_parameters()
+        #self.rnn.flatten_parameters()
         packed_outputs, (h_n, c_n) = self.rnn(packed_inputs)
         outputs, _ = nn.utils.rnn.pad_packed_sequence(
                 packed_outputs, batch_first=True, total_length=total_length
@@ -90,8 +90,8 @@ class Decoder(nn.Module):
         c_tp1 = []
         for i, layer in enumerate(self.layers):
             h_i_tp1, c_i_tp1 = layer(input_vec, (h_t[i], c_t[i]))
-            h_tp1.append(h_i_tp1)
-            c_tp1.append(c_i_tp1)
+            h_tp1 = h_tp1 + [h_i_tp1]
+            c_tp1 = c_tp1 + [c_i_tp1]
             input_vec = h_i_tp1
 
         h_tp1 = torch.stack(h_tp1, dim=0)
@@ -125,13 +125,14 @@ class Attention(nn.Module):
         # score (batch_size, l)
         score = torch.squeeze(
                 torch.bmm(
-                    enc_states, self.attn_matrix(dec_vec).unsqueeze(-1)
+                    enc_states, torch.unsqueeze(self.attn_matrix(dec_vec), -1)
                     )
                 )
         # attn_weight (batch_size, l)
         attn_weight = F.softmax(score, dim=1)
         attn_weight = attn_weight * mask
-        div = torch.sum(attn_weight, dim=1).unsqueeze(-1).expand_as(attn_weight)
+        div = torch.unsqueeze(torch.sum(attn_weight, dim=1), -1)
+        div = div.expand_as(attn_weight)
         attn_weight = attn_weight / div
 
         # weighted sum of enc_states
@@ -256,8 +257,12 @@ class Seq2seq_Model(nn.Module):
         batch_size = in_lengths.size(0)
         start_ids = torch.from_numpy(
                 np.array([START_TOKEN for i in range(batch_size)])
-                ).long().to(self.device)
+                ).long()
+        start_ids = start_ids.to(self.device)
         ref_ids = torch.cat([start_ids.unsqueeze(-1), ref_ids], dim=1)
+
+        #print('Tensor device:{}'.format(in_ids.type()))
+        #print("model device:{}".format(self.src_embedding.embed_layer.weight.type()))
 
         # batch_size * l1 * embed_size(input_size)
         embeded_in_ids = in_embed_layer(in_ids)
@@ -265,6 +270,10 @@ class Seq2seq_Model(nn.Module):
         embeded_ref_ids = ref_embed_layer(ref_ids) 
 
         # Encode
+        min_len = torch.min(in_lengths).item()
+        if min_len <= 0:
+            print("Warning minimum length <= 0!")
+
         enc_outputs, h_n, c_n = self.encoder(embeded_in_ids, in_lengths)
 
         # Decode and calculate output probability.

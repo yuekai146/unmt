@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+import pdb
+
 
 def get_optimizer(net, lr, method='adam', betas=None):
     """
@@ -46,7 +48,7 @@ def store_state(step, seq2seq, seq2seq_optimizer, discriminator,
     """
     state_dict = {
             "step":step,
-            "seq2seq_state_dict":seq2seq.cpu().state_dict(),
+            "seq2seq_state_dict":seq2seq.state_dict(),
             "seq2seq_optimizer_state_dict":seq2seq_optimizer.state_dict(),
             "discriminator_state_dict":discriminator.state_dict(),
             "dis_optimizer_state_dict":dis_optimizer.state_dict()
@@ -104,10 +106,10 @@ def calc_auto_encode(batch, device, direction, seq2seq_model):
                 in_ids, in_mask, in_lengths, ref_ids, ref_mask,
                 ref_lengths
             )
-
     ref_ids, ref_mask, ref_lengths = add_eos(
             ref_ids, ref_mask, ref_lengths
             )
+
     in_ids = in_ids.to(device)
     ref_ids = ref_ids.to(device)
     in_mask = in_mask.to(device)
@@ -116,7 +118,7 @@ def calc_auto_encode(batch, device, direction, seq2seq_model):
     log_probs_auto, enc_outputs = seq2seq_model(
             in_ids, ref_ids, in_mask, in_lengths, direction
             )
-    
+
     loss_auto = l_auto(log_probs_auto, ref_ids, ref_mask)
 
     return loss_auto, enc_outputs, in_mask
@@ -198,6 +200,7 @@ def calc_cross_domain(src_batch, direction, translator, src_vocab, trg_vocab,
             in_ids.to(device), ref_ids.to(device), in_mask.to(device),
             in_lengths, reverse_direction
             )
+    ref_mask = ref_mask.to(device)
     loss_cd = l_cd(log_probs, ref_ids, ref_mask)
 
     return loss_cd, enc_outputs, in_mask.to(device)
@@ -402,7 +405,7 @@ def main():
             help='path to store logging information'
             )
     parser.add_argument(
-            '--store_interval', type=int, default=2000,
+            '--store_interval', type=int, default=1000,
             help='Store the chekpoint after how many batches of training'
             )
     parser.add_argument(
@@ -465,13 +468,15 @@ def main():
     src_words, src_embedding_matrix = get_embedding(
             args.src_embeddings, args.embed_size, args.vocab_size
             )
+    args.vocab_size, args.embed_size = src_embedding_matrix.size()
+    args.vocab_size = args.vocab_size - NUM_OF_SPECIAL_TOKENS
     print("Source embedding matrix is of size {}".format(
             src_embedding_matrix.size()
             )
         )
     args.src_embedding_matrix = src_embedding_matrix
 
-    src_vocab = Vocab(src_words, 'src')
+    src_vocab = Vocab(src_words, 'src', args.vocab_size)
     src_dataset = WMT_Dataset(
             args.src_corpus, 'src', src_vocab, max_len=args.max_len,
             drop_prob=args.drop_prob, k=args.k
@@ -489,10 +494,12 @@ def main():
             )
         )
     args.trg_embedding_matrix = trg_embedding_matrix
+    '''
     args.vocab_size, args.embed_size = trg_embedding_matrix.size()
     args.vocab_size = args.vocab_size - NUM_OF_SPECIAL_TOKENS
+    '''
 
-    trg_vocab = Vocab(trg_words, 'trg')
+    trg_vocab = Vocab(trg_words, 'trg', args.vocab_size)
     trg_dataset = WMT_Dataset(
             args.trg_corpus, 'trg', trg_vocab, max_len=args.max_len,
             drop_prob=args.drop_prob, k=args.k
@@ -585,7 +592,7 @@ def main():
     num_epochs_trained = int(pretrained_step / num_batches)
 
     #This code block is for test purpose
-    num_epochs_trained = 1
+    #num_epochs_trained = 1
 
     # Initialize or reconstruct translator for back translation.
     if num_epochs_trained > 0:
@@ -605,7 +612,7 @@ def main():
                     calc_auto_encode(
                         src_batch, device, 'src2src', seq2seq_model
                     )
-
+            
             l_auto_trg, trg_enc_outputs_auto, trg_enc_mask_auto = \
                     calc_auto_encode(
                         trg_batch, device, 'trg2trg', seq2seq_model
@@ -636,25 +643,11 @@ def main():
                             trg_batch, 'trg2src', BT_translator, trg_vocab,
                             src_vocab, seq2seq_model, args, 'NMT'
                         )
-            
-            l_dis_total = 0.25 * (
-                    l_dis(
-                        discriminator(src_enc_outputs_auto.detach()),
-                        src_enc_mask_auto, args.smooth, 'src'
-                        ) +\
-                    l_dis(
-                        discriminator(trg_enc_outputs_auto.detach()),
-                        trg_enc_mask_auto, args.smooth, 'trg'
-                        ) +\
-                    l_dis(
-                        discriminator(src_enc_outputs_cd.detach()),
-                        src_enc_mask_cd, args.smooth, 'src'
-                        ) +\
-                    l_dis(
-                        discriminator(trg_enc_outputs_cd.detach()),
-                        trg_enc_mask_cd, args.smooth, 'trg'
-                        )
-                    )
+
+            #This code block is for testing
+            #l_ = torch.sum(trg_enc_outputs_auto)
+            #l_.backward()
+            ##############################
 
             l_adv_total = 0.25 * (
                     l_adv(
@@ -675,6 +668,25 @@ def main():
                         )
                     )
 
+            l_dis_total = 0.25 * (
+                    l_dis(
+                        discriminator(src_enc_outputs_auto.detach()),
+                        src_enc_mask_auto, args.smooth, 'src'
+                        ) +\
+                    l_dis(
+                        discriminator(trg_enc_outputs_auto.detach()),
+                        trg_enc_mask_auto, args.smooth, 'trg'
+                        ) +\
+                    l_dis(
+                        discriminator(src_enc_outputs_cd.detach()),
+                        src_enc_mask_cd, args.smooth, 'src'
+                        ) +\
+                    l_dis(
+                        discriminator(trg_enc_outputs_cd.detach()),
+                        trg_enc_mask_cd, args.smooth, 'trg'
+                        )
+                    )
+
             l_seq2seq_model = args.lambda_auto*0.5*(l_auto_src + l_auto_trg) +\
                               args.lambda_cd*0.5*(l_cd_src + l_cd_trg) +\
                               args.lambda_adv*l_adv_total
@@ -687,6 +699,7 @@ def main():
             l_seq2seq_model.backward()
             seq2seq_optimizer.step()
 
+
             dis_optimizer.zero_grad()
             if args.grad_norm is not None:
                 nn.utils.clip_grad_norm_(
@@ -694,6 +707,7 @@ def main():
                         )
             l_dis_total.backward()
             dis_optimizer.step()
+
 
             num_batches_trained = int(epoch * num_batches + i_batch)
             if num_batches_trained % args.log_interval == 0:
@@ -726,6 +740,7 @@ def main():
                         num_batches_trained
                         )
 
+
             if num_batches_trained % args.store_interval == 0:
                 num_stored = len(os.listdir(args.checkpoint_path))
                 if num_stored == args.max_store_num:
@@ -749,7 +764,7 @@ def main():
                         )
 
             print("Batch {} finished!".format(num_batches_trained))
-        
+
         if epoch == 0:
             BT_translator = update_translator(
                     seq2seq_model, args, src_vocab, trg_vocab

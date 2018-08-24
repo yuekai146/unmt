@@ -48,7 +48,7 @@ def get_vocab(corpus_path, embedding_path, vocab_size=50000):
 
 def store_vocab(vocab, path, embedding_size=300):
     f = open(path, 'a')
-    f.writelines(str(len(vocab)) + str(embedding_size) + "\n")
+    f.writelines(str(len(vocab)) + ' ' + str(embedding_size) + "\n")
 
     for item in vocab:
         f.writelines(item[0] + "\n")
@@ -64,20 +64,11 @@ def get_embed_vec(vocab_path, embedding_path):
     embeds = []
     embed_vocab = []
 
-    def to_float(s):
-        try:
-            num = float(s)
-        except ValueError:
-            num = 0.0
-        return num
-
     for i in range(num_words):
         l = f.readline()
         w_with_embed = l.strip().split()
         w = w_with_embed[0]
         embed = w_with_embed[1:]
-
-        embed = [to_float(num) for num in embed]
         embeds.append(embed)
         embed_vocab.append(w)
     f.close()
@@ -104,6 +95,8 @@ def get_embed_vec(vocab_path, embedding_path):
         embed = embeds[index]
         embedding_list.append(embed)
 
+    print("All embedding vector needed got!")
+
     return vocab, embedding_list
 
 def store_embedding_vec(vocab, embedding_list, path):
@@ -113,15 +106,17 @@ def store_embedding_vec(vocab, embedding_list, path):
     f.writelines(str(num_words) + ' ' + str(dim) + '\n')
 
     for w, embed in zip(vocab, embedding_list):
-        l = [' ' + str(num) for num in embed]
+        l = [' ' + num for num in embed]
         l = functools.reduce(lambda a,b: a+b, l)
         l = w + l
         l = l + '\n'
         f.writelines(l)
+    print("Store embedding vector complete!")
 
     f.close()
 
-def throw_long_sents(src_path, trg_path, new_src_path, new_trg_path, max_len=50, threshold=1.5):
+def throw_long_sents(src_path, trg_path, new_src_path, new_trg_path,
+                     max_len=50, threshold=1.5):
     f = open(src_path, 'r')
     src = f.readlines()
     f.close()
@@ -145,3 +140,37 @@ def throw_long_sents(src_path, trg_path, new_src_path, new_trg_path, max_len=50,
 
     src_f.close()
     trg_f.close()
+
+
+def main():
+    corpus_path = '/data/zhaoyuekai/iwslt14/data/train.de-en.en'
+    embedding_path = '/data/zhaoyuekai/unmt/others/crawl-300d-2M.vec'
+    vocab_path = '/data/zhaoyuekai/iwslt14/vocab.en'
+    store_embedding_path = '/data/zhaoyuekai/iwslt14/embeddings.en'
+
+    src_path = '/data/zhaoyuekai/iwslt14/data/train.de-en.en'
+    trg_path = '/data/zhaoyuekai/iwslt14/data/train.de-en.de'
+    new_src_path = '/data/zhaoyuekai/iwslt14/final_train.en'
+    new_trg_path = '/data/zhaoyuekai/iwslt14/final_train.de'
+
+    #final_vocab = get_vocab(corpus_path, embedding_path, vocab_size=30000)
+    #store_vocab(final_vocab, vocab_path, embedding_size=300)
+    #final_vocab, embedding_list = get_embed_vec(vocab_path, embedding_path)
+    #store_embedding_vec(final_vocab, embedding_list, store_embedding_path)
+
+
+    corpus_path = '/data/zhaoyuekai/iwslt14/data/train.de-en.de'
+    embedding_path = '/data/zhaoyuekai/unmt/others/cc.de.300.vec'
+    vocab_path = '/data/zhaoyuekai/iwslt14/vocab.de'
+    store_embedding_path = '/data/zhaoyuekai/iwslt14/embeddings.de'
+
+    #final_vocab = get_vocab(corpus_path, embedding_path, vocab_size=30000)
+    #store_vocab(final_vocab, vocab_path, embedding_size=300)
+    #final_vocab, embedding_list = get_embed_vec(vocab_path, embedding_path)
+    #store_embedding_vec(final_vocab, embedding_list, store_embedding_path)
+
+    throw_long_sents(src_path, trg_path, new_src_path, new_trg_path,
+                     max_len=50, threshold=1.5)
+
+
+main()

@@ -9,6 +9,16 @@ TRG_CORPUS=$ROOT_PATH/final_train.de
 #python train.py --src_embeddings $SRC_EMB --trg_embeddings $TRG_EMB --src_dict $SRC_DICT --trg_dict $TRG_DICT --src_corpus $SRC_CORPUS --trg_corpus $TRG_CORPUS
 
 #Following vars are for test purpose
-MODEL_PATH=./checkpoint/checkpoint_14.pth
+MODEL_PATH=./checkpoint/checkpoint_0.pth
 
-python train.py --src_embeddings $SRC_EMB --trg_embeddings $TRG_EMB --src_dict $SRC_DICT --trg_dict $TRG_DICT --src_corpus $SRC_CORPUS --trg_corpus $TRG_CORPUS --resume_seq2seq $MODEL_PATH --resume_dis $MODEL_PATH
+CUDA_VISIBLE_DEVICES=1 python train.py \
+		--src_embeddings $SRC_EMB \
+		--trg_embeddings $TRG_EMB \
+		--src_dict $SRC_DICT \
+		--trg_dict $TRG_DICT \
+		--src_corpus $SRC_CORPUS \
+		--trg_corpus $TRG_CORPUS \
+		--batch_size 8\
+		--cuda
+		--resume_seq2seq $MODEL_PATH \
+		--resume_dis $MODEL_PATH
